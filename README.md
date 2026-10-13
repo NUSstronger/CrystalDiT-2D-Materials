@@ -169,12 +169,6 @@ See [`docs/randomness_and_reproducibility.md`](docs/randomness_and_reproducibili
 
 ---
 
-## Citation
-
-TODO: Update upon publication
-
----
-
 ## License
 
 See [`LICENSE`](LICENSE)
