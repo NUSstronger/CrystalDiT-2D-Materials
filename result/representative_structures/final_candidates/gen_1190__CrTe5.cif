@@ -1,0 +1,38 @@
+# generated using pymatgen
+data_CrTe5
+_symmetry_space_group_name_H-M   'P 1'
+_cell_length_a   5.01812621
+_cell_length_b   6.84009950
+_cell_length_c   31.77845163
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   78.92602153
+_symmetry_Int_Tables_number   1
+_chemical_formula_structural   CrTe5
+_chemical_formula_sum   'Cr2 Te10'
+_cell_volume   1070.46860441
+_cell_formula_units_Z   2
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Cr  Cr0  1  0.36725254  0.41831346  0.44660568  1
+  Cr  Cr1  1  0.29634346  0.54750536  0.57249450  1
+  Te  Te2  1  0.49308152  -0.11299402  0.55925428  1
+  Te  Te3  1  0.17015126  0.07889019  0.45971178  1
+  Te  Te4  1  0.55364536  0.74987350  0.42287957  1
+  Te  Te5  1  0.00133438  0.62710203  0.50073833  1
+  Te  Te6  1  0.61973017  0.44831224  0.64044143  1
+  Te  Te7  1  0.75496597  0.20763534  0.39472619  1
+  Te  Te8  1  1.10989701  0.21601775  0.59620662  1
+  Te  Te9  1  0.04381169  0.51783422  0.37862338  1
+  Te  Te10  1  0.66222704  0.33832174  0.51829909  1
+  Te  Te11  1  -0.09167589  0.75844244  0.62424628  1

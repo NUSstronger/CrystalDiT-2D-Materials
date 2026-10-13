@@ -1,0 +1,17 @@
+numpy>=1.24
+pyyaml>=6.0
+
+[dft]
+gpaw>=24.6
+ase>=3.22
+phonopy>=2.18
+mpi4py>=3.1
+
+[mace]
+mace-torch>=0.3
+
+[ml]
+torch>=2.0
+timm
+pymatgen>=2023
+e3nn>=0.5

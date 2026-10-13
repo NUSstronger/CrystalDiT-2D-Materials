@@ -1,0 +1,153 @@
+# DFT Validation Configuration (GPAW)
+# Extracted from: dfca/validation/config.py (GPAWConfig dataclass)
+#
+# Purpose: Configure DFT validation using GPAW following C2DB standards.
+# All values are scientific constants calibrated per C2DB documentation.
+# DO NOT modify scientific values without version bump.
+#
+# Usage:
+#   PYTHONPATH=. python -c "
+#   from dfca.validation import ValidationPipeline
+#   from dfca.config import load_config
+#
+#   cfg = load_config('configs/dft_validation.yaml')
+#   pipeline = ValidationPipeline(cfg)
+#   pipeline.run()
+#   "
+
+# =============================================================================
+# INPUT/OUTPUT
+# =============================================================================
+input_dir: null  # Required: path to screening output directory (CLI override or environment variable)
+output_dir: ./gpaw_validation
+
+# =============================================================================
+# GPAW ELECTRONIC PARAMETERS
+# =============================================================================
+gpaw:
+  encut: 550                                # eV, plane-wave cutoff (C2DB standard)
+  xc: PBE                                  # Exchange-correlation functional
+  fermi_smearing: 0.05                      # eV, semiconductor default
+  dk_per_ang: 0.03                          # Å⁻¹, max k-point spacing
+  spinpol: null                             # null = auto-detect
+  maxiter: 500                             # Max SCF iterations
+
+# =============================================================================
+# ADAPTIVE ELECTRONIC PARAMETERS
+# =============================================================================
+adaptive:
+  # Gap interpolation (removed old discrete logic)
+  gap_interp_scale: 0.5                     # eV, gap decay scale
+  dos_interp_scale: 1.0                     # states/eV/atom, DOS interpolation scale
+  k_max_boost: 2.0                          # Max k-density multiplier for metals
+  fermi_smearing_metal: 0.02                # eV, metal limit
+  fermi_smearing_semiconductor: 0.05        # eV, semiconductor limit
+
+  # Supercell sizing
+  supercell_min_length_base: 10.0            # Å, base minimum
+  supercell_min_length_boost: 5.0            # Å, metal limit extra
+
+# =============================================================================
+# M1: STRUCTURE RELAXATION
+# =============================================================================
+m1_relaxation:
+  relax_fmax: 0.01                         # eV/Å, force convergence
+  relax_steps: 200                          # Max relaxation steps
+  optimizer: FIRE                           # FIRE or BFGS
+  fix_cell: ab                              # ab = fix c-axis
+  symmetry_tol: 0.01                        # Å, spglib symmetry tolerance
+  always_spinpol: false                     # Always spin-polarized relaxation
+
+  # 2D constraint mask: [xx, yy, zz, xy, yz, zx]
+  # a, b allowed; c, angles fixed; xy shear allowed
+  relax_2d_mask: [true, true, false, false, false, true]
+
+# FM/NM ground state comparison
+fm_nm:
+  degenerate_tol_eV: 0.001                  # eV/atom, degeneracy threshold
+  compare_before_m2: true                    # Compare before M2, may replace structure
+
+# Zero-step convergence verification
+zero_step:
+  verify: true                              # Enable zero-step check
+  displacement: 0.05                        # Å, displacement amplitude
+  verify_threshold: 0.05                     # eV/atom, energy delta threshold
+
+# =============================================================================
+# M2: ELASTIC CONSTANTS
+# =============================================================================
+m2_elastic:
+  elastic_delta: 0.005                       # Strain amplitude (±0.5%)
+  elastic_fmax: 0.01                        # eV/Å, force convergence
+  elastic_relax_steps: 100                  # Internal relaxation steps
+
+  # Born stability noise tolerance
+  born_noise_sigma: 3.0                      # Born criteria sigma
+  symmetry_noise_sigma: 3.0                  # Hexagonal symmetry sigma
+
+# =============================================================================
+# M3: PHONON DISPERSION
+# =============================================================================
+m3_phonon:
+  supercell: [3, 3, 1]                     # Supercell dimensions
+  displacement: 0.01                        # Å, atomic displacement
+
+  # Displacement convergence testing
+  convergence_test: false                   # Default: fixed 0.01 Å
+  displacement_candidates: [0.005, 0.0075, 0.01, 0.015]  # Å
+  displacement_tolerance: 0.02              # THz, convergence tolerance
+
+  # Dynamic noise tolerance
+  noise_sigma: 3.0                          # Γ-point tolerance sigma
+  noise_floor_max_THz: 1.0                  # THz, noise estimation ceiling
+  boundary_tighten_factor: 5.0              # BZ boundary tightening
+
+  # Static fallback tolerances (THz)
+  gamma_tol: -0.1                           # Γ-point fallback
+  boundary_tol: -0.1                        # BZ boundary fallback
+  npoints_per_segment: 51                   # q-points per segment
+
+  # Branch-specific tolerances (THz)
+  za_tol: -0.2                             # ZA branch Γ-point
+  za_sigma_factor: 5.0                      # ZA noise amplification
+  optical_tol: -0.05                        # Optical branch
+
+  # Small lattice handling (C, B, N, O)
+  small_lattice_elements: [C, B, N, O]
+  small_lattice_min_length_multiplier: 2.0
+  small_lattice_min_length: 15.0             # Å, hard minimum
+  small_lattice_max_supercell: [7, 7, 1]
+
+# =============================================================================
+# M4: CONVEX HULL (Thermodynamic Stability)
+# =============================================================================
+m4_ehull:
+  ehull_threshold: 0.2                       # eV/atom, stability threshold
+  ref_pool_size: 3                          # MP candidates per formula
+  use_local_ref: true                       # Scheme B: local GPAW reference
+
+# =============================================================================
+# GAP PROBE
+# =============================================================================
+gap_probe:
+  skip_gap_probe: false                    # Skip = use metal defaults
+
+# =============================================================================
+# PARALLEL & RETRY
+# =============================================================================
+parallel:
+  auto_cores: true                         # Auto-detect cores
+  max_cores: 32                           # Maximum cores per job
+  mpi: true                                # Enable MPI
+
+scf_retry:
+  max_retries: 2                          # SCF convergence retries
+  perturbs: [0.05, 0.1]                    # Mix perturbation amplitudes
+
+# =============================================================================
+# OUTPUT CONTROL
+# =============================================================================
+output:
+  save_poscar: true                        # Save VASP POSCAR files
+  save_phonon_pdf: true                    # Save phonon dispersion plots
+  verbose: true                            # Detailed logging

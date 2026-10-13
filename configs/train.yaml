@@ -1,0 +1,135 @@
+# Training Configuration for CrystalDiT
+# Extracted from: scripts/train.py, dfca/training/constraints.py, dfca/data/representation.py
+#
+# Purpose: Generation reproducibility - these parameters control model behavior.
+# DO NOT modify scientific values without version bump.
+#
+# Usage:
+#   PYTHONPATH=. python scripts/train.py --config configs/train.yaml
+#   Or specify individual overrides: --learning_rate 0.0002 --epochs 50
+
+# =============================================================================
+# RANDOM SEED & REPRODUCIBILITY
+# =============================================================================
+seed: 42
+
+# =============================================================================
+# DATA CONFIGURATION
+# =============================================================================
+data:
+  data_dir: ./Data                          # Dataset root directory
+  max_atoms: 20                             # Maximum atoms per structure (slab only, no vacuum)
+  max_length: 46.7425                       # Lattice normalization constant (MAX_LATTICE_LENGTH)
+  batch_size: 16
+  num_workers: 4                            # DataLoader workers
+  pin_memory: true
+  persistent_workers: true                  # Keep workers alive between epochs
+
+# =============================================================================
+# MODEL ARCHITECTURE
+# =============================================================================
+model:
+  hidden_size: 512
+  depth: 18
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0                              # No dropout (deterministic training)
+
+# =============================================================================
+# DIFFUSION PROCESS
+# =============================================================================
+diffusion:
+  steps: 1000                               # DDPM timesteps
+  beta_schedule: linear                     # Linear noise schedule
+
+  # Noise scales (critical for generation reproducibility)
+  z_noise_scale: 0.113001                   # Atom coordinate noise std
+  lattice_c_noise_scale: 0.340659           # Lattice c-axis noise std
+
+# =============================================================================
+# OPTIMIZER
+# =============================================================================
+optimizer:
+  learning_rate: 0.000203886                # 2.03886e-4
+  weight_decay: 0.0468414
+  min_learning_rate: 1.0e-6                 # For cosine schedule floor
+
+# =============================================================================
+# TRAINING SCHEDULE
+# =============================================================================
+scheduler:
+  type: cosine_with_warmup                  # Cosine annealing with warmup
+  warmup_epochs: 5
+  t0_epochs: 25
+  t_mult: 2
+  start_factor: 0.03                        # Initial LR = 0.03 * base_lr
+
+# =============================================================================
+# GRADIENT CLIPPING
+# =============================================================================
+gradient:
+  clip_grad: 2.803345                       # Global gradient norm clip
+  accumulation_steps: 1
+
+# =============================================================================
+# PHYSICAL CONSTRAINTS
+# =============================================================================
+constraints:
+  enabled: true                             # Enable physical constraint losses
+
+  # Constraint loss weights (epoch decay applied separately)
+  lattice_loss_z_weight: 0.706323           # Lattice z-component weight
+
+  # Decay boundaries for constraint intensity
+  decay_mid: 0.224396                       # DECAY_BOUNDARY_MID
+  decay_late: 0.122513                      # DECAY_BOUNDARY_LATE
+
+  # Atom coordinate constraints
+  rowcol_temperature: 0.0604                # Soft validity temperature
+  rowcol_active_threshold: 0.403809         # t_frac threshold for row/col loss
+
+  # Lattice constraints
+  lattice_quad_power: 4                     # Time-weighting exponent
+  min_angle_deg: 60.0                       # Minimum lattice angle (gamma)
+  max_angle_deg: 125.0                      # Maximum lattice angle (gamma)
+  min_angle_ab_deg: 80.0                    # ab-plane minimum angle
+  max_angle_ab_deg: 100.0                   # ab-plane maximum angle
+
+  # Slab geometry
+  slab_center: 0.5                          # Fractional z-center for 2D slab
+
+  # Vacuum constraints (Å)
+  min_vacuum_thickness: 15.0                # MIN_VACUUM_THICKNESS
+  slab_spread_max: 3.0                      # SLAB_SPREAD_PHYSICAL (Å)
+
+  # c-axis bounds (Å)
+  c_length_min: 10.0                        # Minimum c-axis length
+  c_length_max: 50.0                        # Maximum c-axis length
+
+# =============================================================================
+# CHECKPOINTING
+# =============================================================================
+checkpoint:
+  save_interval: 5                          # Save every N epochs
+  save_top_k: 3                             # Keep top K checkpoints
+  monitor: val_loss                         # Metric to monitor
+  mode: min                                 # Minimize val_loss
+  save_last: true                           # Always save 'last.pt'
+
+  # EMA settings
+  ema_decay: 0.9999                         # Exponential moving average decay
+  ema_start_step: 1000                     # Start EMA after N steps
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+validation:
+  interval: 1                               # Validate every N epochs
+  batch_size: 32                            # Validation batch size
+
+# =============================================================================
+# DISTRIBUTED TRAINING
+# =============================================================================
+distributed:
+  backend: nccl                             # NCCL for multi-GPU
+  find_unused_parameters: false

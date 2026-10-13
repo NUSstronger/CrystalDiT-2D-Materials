@@ -1,0 +1,60 @@
+# DFCA ML Environment Specification
+# Purpose: Machine learning training, generation, and screening
+# Generated: 2026-10-01
+
+name: dfca-ml
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # Python core
+  - python=3.10
+  - pip>=23.0
+
+  # PyTorch (GPU support)
+  - pytorch>=2.0
+  - torchvision
+  - torchaudio
+  - cuda-toolkit>=11.8  # For GPU support
+
+  # Scientific computing
+  - numpy>=1.24
+  - scipy>=1.10
+  - pandas>=2.0
+  - matplotlib>=3.7
+
+  # Materials science
+  - pymatgen>=2023
+  - monty>=2023
+  - spglib
+  - sympy
+
+  # Data processing
+  - h5py>=3.8
+  - pyyaml>=6.0
+  - tqdm>=4.65
+
+  # Machine learning (MACE potentials)
+  - pip:
+    - mace-torch>=0.3
+    - e3nn>=0.5
+    - timm  # DiT architecture components (PatchEmbed, Attention, Mlp)
+
+  # Testing
+  - pytest>=7.0
+  - pytest-cov
+
+  # Development
+  - black>=23.0
+  - ruff>=0.1
+
+variables:
+  PYTHONPATH: .
+  OMP_NUM_THREADS: "4"
+  MKL_NUM_THREADS: "4"
+
+export:
+  # CUDA optimizations
+  CUDA_LAUNCH_BLOCKING: "0"
+  PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"
