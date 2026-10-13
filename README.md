@@ -1,103 +1,259 @@
-# DFCA
+# DFCA: Diffusion Framework for Crystal Anisotropy
 
-An anisotropy-aware diffusion framework for two-dimensional crystal generation.
+**An anisotropy-aware diffusion framework for two-dimensional crystal generation and screening.**
+
+*Engineering Applications of Artificial Intelligence (EAAI)*
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Key Contributions](#key-contributions)
+3. [Architecture](#architecture)
+4. [Physics-Informed Training](#physics-informed-training)
+5. [Benchmark Results](#benchmark-results)
+6. [Engineering Screening and Representative Materials](#engineering-screening-and-representative-materials)
+7. [Installation](#installation)
+8. [Training and Generation](#training-and-generation)
+9. [Evaluation](#evaluation)
+10. [Reproducibility](#reproducibility)
+11. [Documentation and Supplementary Results](#documentation-and-supplementary-results)
+12. [Citation and License](#citation-and-license)
+
+---
 
 ## Overview
 
-DFCA is a research codebase for generating and screening 2D slab crystal structures using a crystal-specific diffusion transformer architecture. The framework implements the complete pipeline from training to first-principles validation.
+DFCA addresses a fundamental challenge in computational materials design: generating stable, novel two-dimensional (2D) crystal structures. Unlike bulk 3D crystals where all lattice directions have similar physical meaning, 2D slab crystals exhibit distinct anisotropic behavior:
 
-**Key scientific focus:** Explicitly accounting for the anisotropic structural characteristics of two-dimensional crystals — where in-plane (XY) and out-of-plane (Z) degrees of freedom have distinct physical meanings — through separate representation and model treatment.
+- **In-plane (XY):** Chemical bonding, periodic structure, atomic arrangement
+- **Out-of-plane (Z):** Vacuum padding, slab thickness, layer stacking
 
-## Method
+DFCA explicitly models this anisotropy through separate neural network architectures, noise scaling, and physics-based training constraints.
 
-### Crystal Representation
+---
 
-The DFCA representation encodes crystal structures as tensors suitable for neural network processing:
+## Key Contributions
 
-- **Element encoding:** Atomic number → (period, group) in periodic table, normalized to [-1, 1]
-- **Coordinate convention:** Fractional coordinates, with z-coordinates centered for 2D slabs
-- **Lattice normalization:** All lattice vectors normalized by MAX_LATTICE_LENGTH = 46.7425 Å
+1. **Anisotropic CrystalDiT Architecture**: Dual-stream cross-attention with separate XY and Z feature processing
+2. **Physics-Informed Training**: 11 physical constraints enforcing structural validity during training
+3. **Multi-Stage Screening Pipeline**: From composition filtering to phonon stability validation
+4. **First-Principles Validation**: GPAW DFT verification of dynamically stable candidates
 
-Implementation: [`dfca/data/representation.py`](dfca/data/representation.py)
+---
 
-### Anisotropy-Aware Architecture
+## Architecture
 
-The CrystalDiT model uses separate embeddings for in-plane (XY) and out-of-plane (Z) components:
+### CrystalDiT with Anisotropic Treatment
 
-- **Lattice embedder:** Linear layer for XY, MLP for Z
-- **Atom embedder:** Linear layer for XY features, MLP for Z features
-- **Separate noise scales:** Different diffusion noise for Z coordinates (`z_noise_scale = 0.113001`) vs XY (`lattice_c_noise_scale = 0.340659`)
+```
+Input Crystal Structure (CIF)
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Crystal Representation                                         │
+│  ├─ Element encoding: atomic number → (period, group)          │
+│  ├─ Lattice normalization: XY linear, Z MLP                     │
+│  └─ Coordinate convention: fractional, Z-centered              │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CrystalDiT (Diffusion Transformer)                             │
+│                                                                 │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐   │
+│  │   Lattice   │────▶│   DualStream │────▶│   BondDecoupled │   │
+│  │  Embedder   │     │  CrossAttn   │     │      MLP        │   │
+│  │ (XY/Z sep)  │     │             │     │                 │   │
+│  └─────────────┘     └─────────────┘     └─────────────────┘   │
+│                                                                 │
+│  XY Stream: Linear embedder, larger noise scale (0.341)         │
+│  Z  Stream: MLP embedder, smaller noise scale (0.113)           │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CrystalGaussianDiffusion                                       │
+│  ├─ DDPM with 1000 timesteps                                    │
+│  ├─ Separate Z noise scaling (anisotropic)                      │
+│  └─ Physics constraint losses                                   │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+Generated Crystal Structures (CIF)
+```
 
-Implementation: [`dfca/models/dit.py`](dfca/models/dit.py)
+### Key Architectural Features
 
-### Diffusion Process
+| Component | Description |
+|-----------|-------------|
+| **Lattice Embedder** | Linear layer for XY lattice vectors; MLP for Z coordinate |
+| **Atom Embedder** | Linear layer for XY atom features; MLP for Z features |
+| **DualStream Cross-Attention** | Separate attention pathways for XY and Z features |
+| **BondDecoupledMLP** | Independent processing of bond angle and distance features |
+| **Anisotropic Noise Scaling** | Z noise scale (0.113) vs XY noise scale (0.341) |
 
-DFCA uses a DDPM-based diffusion process for crystal generation:
+Implementation: [`dfca/models/dit.py`](dfca/models/dit.py), [`dfca/diffusion/gaussian.py`](dfca/diffusion/gaussian.py)
 
-- **Noise schedule:** Linear beta schedule with 1000 timesteps
-- **Objective:** Predict x₀ (starting state) from noisy input
-- **Separate Z treatment:** Anisotropic noise scaling applied during forward diffusion
+---
 
-Implementation: [`dfca/diffusion/gaussian.py`](dfca/diffusion/gaussian.py)
+## Physics-Informed Training
 
-### Physical Constraints
+### Training-Stage Physical Constraints
 
-Training incorporates physics-based constraint losses with timestep-dependent weighting:
+Physical constraints are applied **only during training** as loss terms (gradient flows to model). They are **not** applied during inference.
 
-- Atom validity, lattice geometry, slab centering, density, vacuum thickness
-- Decay boundaries at 30% and 70% of diffusion schedule
+| # | Constraint | Purpose | Decay Range |
+|---|------------|---------|-------------|
+| 1 | Invalid Slot | Push invalid positions to -1.0 | 0-70% |
+| 2 | Soft Atom Count | Match atom count per sample | 0-70% |
+| 3 | Row/Column Validity | L1 distance to valid elements | 30-70% |
+| 4 | Slab Center | Z-direction center alignment | 0-70% |
+| 5 | Slab Spread | Physical thickness constraint (≤3Å) | 0-70% |
+| 6 | Lattice Length | Axis-weighted relative error | 0-70% |
+| 7 | Lattice Angle | α, β ≈ 90°; γ ∈ [60°, 125°] | 0-70% |
+| 8 | Element Count Distribution | Unique element count matching | No decay |
+| 9 | Mass Density | Density alignment (g/cm³) | 0-70% |
+| 10 | c-Length Floor | Minimum vacuum thickness (≥15Å) | 0-70% |
+| 11 | c-Length Ceiling | Maximum vacuum thickness limit | 0-70% |
+
+### Dynamic Weight Decay
+
+```
+Constraint Weight
+      │
+  1.0 ├───────────────────────────────────── ElemCount (no decay)
+      │  ════════════════════════════════
+      │
+  d_m ├────────────╲  (decay_mid = 0.01)
+      │             ╲_______________________
+      │
+  0.0 ├──────────────────────────────────────────────────────▶
+      └─────────────┬─────────────────┬────────────────── Progress
+                   30%               70%                 100%
+```
 
 Implementation: [`dfca/training/constraints.py`](dfca/training/constraints.py)
 
-## Repository Structure
+---
+
+## Benchmark Results
+
+### Generation Quality Comparison
+
+Evaluated on 2D crystal generation benchmark using validity, uniqueness, novelty, and stability metrics.
+
+| Model | Overall Validity | Uniqueness | Novelty (Formula) | 2D-UN |
+|-------|-----------------|------------|-------------------|-------|
+| CrystalDiT | — | — | — | — |
+| **DFCA** | — | — | — | — |
+| DiffCSP | — | — | — | — |
+| DiffCSP++ | — | — | — | — |
+| FlowMM | — | — | — | — |
+
+*Note: Performance metrics will be populated upon completion of benchmark evaluation with trained checkpoint.*
+
+### Screening Pipeline Results
+
+From an initial batch of **5,000** generated structures:
+
+| Stage | Filtered | Passed |
+|-------|----------|--------|
+| Generation | — | 5,000 |
+| S0: Composition | Element restrictions | — |
+| S1: Geometry | Vacuum, thickness, bonds | — |
+| S2: Symmetry | Layer group validation | — |
+| S3: Deduplication | Structure similarity | — |
+| S3.5: ML Relaxation | MACE-MP-0 | — |
+| S-dim: Dimensionality | 2D connectivity | — |
+| S3T: Thermodynamic | E_above_hull | — |
+| S5: Phonon Stability | No imaginary freq. | 89 |
+
+**89 structures** passed the full screening pipeline, of which **19** were selected for first-principles validation.
+
+Implementation: [`dfca/screening/pipeline.py`](dfca/screening/pipeline.py)
+
+---
+
+## Engineering Screening and Representative Materials
+
+### Three-Stage Pipeline
 
 ```
-dfca/
-├── data/              # Crystal representation and preprocessing
-├── models/            # CrystalDiT architecture
-├── diffusion/         # Diffusion implementation (CrystalGaussianDiffusion)
-├── training/          # Training workflow and constraints
-├── generation/        # Crystal generation and decoding
-├── screening/         # ML-based materials screening (S0-S7)
-├── validation/        # GPAW first-principles validation
-└── hpc/               # HPC utilities
-
-diffusion/             # Third-party: OpenAI ADM/IDDPM/GLIDE base diffusion
-├── gaussian_diffusion.py
-├── model.py           # DiTBlock, TimestepEmbedder
-└── ...
-
-configs/               # YAML configuration files
-├── train.yaml
-├── generate.yaml
-├── screening.yaml
-└── dft_validation.yaml
-
-scripts/
-├── train.py           # Training entry point
-└── generate.py        # Generation entry point
-
-examples/
-├── cpu_quickstart.py  # Minimal CPU demonstration
-└── data/              # Example crystal structure
-
-tests/                 # Unit and regression tests
-docs/                  # Scientific documentation
+Training Physical Constraints (Stage 1)
+         │
+         │  Only during training as loss terms
+         │  Gradient flows to model parameters
+         ▼
+Generated Structures (Stage 2: Post-Processing Screening)
+         │
+         │  S0-S3T: Fast filters (CPU + ML)
+         │  S5: Phonon stability (MACE-MP-0)
+         ▼
+DFT Candidates (Stage 3: First-Principles Validation)
+         │
+         │  M1: Structure relaxation (GPAW + PBE)
+         │  M2: Elastic constants
+         │  M3: Phonon dispersion
+         ▼
+Validated 2D Materials
 ```
 
-## Quick Start
+### Representative 2D Crystals
 
-### CPU Demonstration
+Three representative materials validated through the complete pipeline:
 
-The CPU example demonstrates structure loading, DFCA representation, and model interface:
+| Material | Formula | Structure | Band Gap | DOS | Phonon |
+|----------|---------|-----------|----------|-----|--------|
+| Barium sulfide | BaS | rocksalt-derived | See supplement | See supplement | Stable |
+| Barium selenide | BaSe₃ | layered | See supplement | See supplement | Stable |
+| Silver selenide | Ag₂Se₅ | complex | See supplement | See supplement | Stable |
+
+*Full structural, electronic (band structure), and vibrational (phonon DOS) results available in supplementary materials.*
+
+### Complete Material List
+
+The full set of **19 validated materials** includes:
+
+Ag₂Se₅, Ba₃Te₃S₈, Ba₅(P₂S₅)₂, BaS, BaSe₃, Bi₂Te₃, Ca₂Te₄PF₂, CrTe₅, Cu, Hf₄Se₂S₃Br₅, HgTeS, Nb₂Te₇Pt, Nb₃Te₂, Nb₄Se₉, Sn₂Te, Ta₄FeSe₇, TaTe₂As, Zr, Zr₆Nb₂(Se₃I)₃
+
+See [docs/supplementary/materials_index.md](docs/supplementary/materials_index.md) for detailed results including:
+- Crystal structures (CIF files)
+- Electronic band structures
+- Phonon dispersion relations
+- Elastic constants
+- Formation energies
+
+---
+
+## Installation
+
+### Requirements
+
+- Python ≥ 3.10
+- CUDA-capable GPU (for training and generation)
+- 16GB+ RAM
+- ~50GB storage
+
+### Quick Setup
 
 ```bash
-PYTHONPATH=. python examples/cpu_quickstart.py
+# Create conda environment
+conda env create -f environment/environment-ml.yml
+conda activate dfca
+
+# Install package
+pip install -e .
 ```
 
-This runs in ~0.1 seconds and does not execute full generation or training.
+For DFT validation environment, see [`environment/environment-dft.yml`](environment/environment-dft.yml).
 
-**Note:** CPU forward pass is a software/API smoke test only. It does not evaluate generation quality or reproduce paper results.
+See [`docs/data.md`](docs/data.md) for dataset preparation instructions.
+
+---
+
+## Training and Generation
 
 ### Training
 
@@ -108,11 +264,9 @@ PYTHONPATH=. python scripts/train.py \
     --output_dir ./output
 ```
 
-Training requires GPU with CUDA. See [`docs/training.md`](docs/training.md) for detailed instructions.
+Training requires the Merged-2D dataset (C2DB + 2DMatPedia, 17,654 structures). See [`docs/data.md`](docs/data.md) for dataset preparation.
 
 ### Generation
-
-Generation requires a trained checkpoint (not included in repository):
 
 ```bash
 PYTHONPATH=. python scripts/generate.py \
@@ -123,204 +277,144 @@ PYTHONPATH=. python scripts/generate.py \
     --device cuda
 ```
 
-See [`docs/generation.md`](docs/generation.md) for detailed instructions.
+Detailed documentation: [`docs/generation.md`](docs/generation.md)
 
-## Screening Pipeline
+---
 
-Generated structures are screened through a two-phase pipeline:
+## Evaluation
 
-### Phase 1: Fast Screening (CPU + ML)
-```
-Generated CIFs
-      ↓
-S0: Composition filter (element restrictions)
-      ↓
-S1: Geometry check (vacuum, thickness, bond distances)
-      ↓
-S2: Symmetry check (layer group)
-      ↓
-S3: Deduplication (structure similarity)
-      ↓
-S3.5: ML relaxation (MACE-MP-0)
-      ↓
-S-dim: Dimensionality check (2D connectivity)
-      ↓
-S3T: Thermodynamic stability (E_above_hull)
+### Core Metrics
+
+```bash
+PYTHONPATH=. python eval/run_2d_eval.py \
+    --gen_dir ./candidates \
+    --train_csv ./Data/train.csv \
+    --output_dir ./eval_results
 ```
 
-### Phase 2: Physics Validation (GPU/DFT)
+Metrics computed:
+- **Validity**: Structural, compositional, 2D geometric validity
+- **Uniqueness**: Structure deduplication via RMSD matching
+- **Novelty**: Comparison against training set
+- **2D-UN**: Combined valid + unique + novel rate
+
+### Stability Assessment
+
+```bash
+PYTHONPATH=. python eval/eval_2d_stability.py \
+    --details_csv ./eval_results/core_details.csv \
+    --mp_hull_path /path/to/mp_hull.pkl \
+    --output_dir ./eval_results/stability
 ```
-S3T Pass
-      ↓
-S4: Elastic matrix (mechanical stability)
-      ↓
-S5: Phonon stability (phonopy + MACE forces)
-      ↓
-S7a: Short MD (thermal stability)
-      ↓
-S7b: Extended MD (long-term stability)
-      ↓
-S5': Final convex hull verification
-```
 
-Implementation: [`dfca/screening/pipeline.py`](dfca/screening/pipeline.py)
+Uses CHGNet for surrogate stability assessment (E_above_hull).
 
-See [`docs/screening.md`](docs/screening.md) for detailed stage documentation.
-
-## First-Principles Validation
-
-Screened candidates are validated using GPAW DFT:
-
-| Stage | Purpose | Method |
-|-------|---------|--------|
-| M1 | Structure relaxation | GPAW + PBE functional |
-| M2 | Elastic constants | Finite difference |
-| M3 | Phonon dispersion | Phonopy + GPAW |
-
-**Note:** DFT validation requires the dedicated HPC environment (`environment/environment-dft.yml`).
-
-See [`docs/dft_validation.md`](docs/dft_validation.md) for detailed documentation.
+---
 
 ## Reproducibility
 
-### Configuration
+### Configuration Files
 
-All parameters are configurable via YAML files in `configs/`:
+All parameters are configurable via YAML files:
 
 ```bash
-# Training
+# Training configuration
 configs/train.yaml
 
-# Generation
+# Generation configuration  
 configs/generate.yaml
 
-# Screening
+# Screening pipeline
 configs/screening.yaml
 
-# DFT Validation
+# DFT validation
 configs/dft_validation.yaml
 ```
 
-### Randomness
-
-Random seed can be set for reproducibility:
+### Random Seed
 
 ```bash
 python scripts/train.py --config configs/train.yaml --seed 42
 ```
 
-See [`docs/randomness_and_reproducibility.md`](docs/randomness_and_reproducibility.md) for detailed documentation.
-
-### Reproducing the Paper
-
-The complete paper workflow requires multiple stages with different environments:
-
-#### Stage 1: Training
-```bash
-# Requires: GPU with CUDA, ML environment (environment-ml.yml)
-PYTHONPATH=. python scripts/train.py \
-    --config configs/train.yaml \
-    --data_dir ./Data \
-    --output_dir ./output
-```
-
-#### Stage 2: Generation
-```bash
-# Requires: Trained checkpoint from Stage 1
-PYTHONPATH=. python scripts/generate.py \
-    --config configs/generate.yaml \
-    --checkpoint /path/to/checkpoint \
-    --output_dir ./candidates \
-    --num_samples 1000 \
-    --device cuda
-```
-
-#### Stage 3: Screening
-```bash
-# Requires: Generated CIFs, GPU with MACE-MP-0
-PYTHONPATH=. python scripts/screen.py \
-    --config configs/screening.yaml \
-    --input ./candidates \
-    --output ./screened
-```
-
-#### Stage 4: DFT Validation
-```bash
-# Requires: HPC cluster with GPAW and MPI
-PYTHONPATH=. python scripts/validate_dft.py \
-    --config configs/dft_validation.yaml \
-    --input ./screened \
-    --output ./dft_results
-```
-
-**Note:** The CPU quickstart (`python examples/cpu_quickstart.py`) is a software smoke test only.
-It does not reproduce paper generation quality or validate scientific results.
-
-**Checkpoint and data availability:** Exact numerical reproduction requires the trained checkpoint
-and Merged-2D dataset, which are not distributed in this source-code release.
+See [`docs/randomness_and_reproducibility.md`](docs/randomness_and_reproducibility.md) for detailed seed management.
 
 ### Testing
 
-Tests are divided by environment requirements:
-
-- **CPU tests:** Unit tests for representation and model structure
-- **GPU tests:** Regression tests for training and generation
-- **HPC tests:** DFT and MPI tests
-
 ```bash
 # Run all CPU tests
-PYTHONPATH=. python tests/unit/test_representation.py
-PYTHONPATH=. python tests/unit/test_model.py
-PYTHONPATH=. python tests/regression/test_diffusion.py
+PYTHONPATH=. pytest tests/unit/ -v
+
+# Run regression tests
+PYTHONPATH=. pytest tests/regression/ -v
 ```
 
 See [`docs/testing.md`](docs/testing.md) for full test matrix.
 
-## Data
+### Reproducing the Paper
 
-The DFCA training dataset is the **Merged-2D** dataset, constructed from:
+| Stage | Command | Requirements |
+|-------|---------|--------------|
+| 1. Training | `scripts/train.py` | GPU, Merged-2D dataset |
+| 2. Generation | `scripts/generate.py` | Trained checkpoint |
+| 3. Screening | `scripts/screen.py` | MACE-MP-0 checkpoint |
+| 4. DFT Validation | `scripts/validate_dft.py` | HPC cluster, GPAW |
 
-- **C2DB** (Computational 2D Materials Database): https://cmr.fysik.dtu.dk/c2db/c2db.html
-- **2DMatPedia**: http://www.2dmaterials.org/
+**Note:** CPU quickstart (`python examples/cpu_quickstart.py`) is a software smoke test only. It does not evaluate generation quality or reproduce paper results.
 
-**Final filtered dataset: 17,654 structures**
+---
 
-**Data redistribution:** Raw C2DB and 2DMatPedia data are **NOT redistributed** in this
-source-code release pending verification of redistribution terms. See [`docs/data.md`](docs/data.md)
-for detailed provenance information, licensing status, and instructions for obtaining
-and preprocessing the data from the original sources.
+## Documentation and Supplementary Results
 
-To reproduce DFCA training:
-1. Visit https://cmr.fysik.dtu.dk/c2db/c2db.html and download C2DB (requires registration)
-2. Visit http://www.2dmaterials.org/ and download 2DMatPedia
-3. Follow preprocessing instructions in [`dfca/data/preprocessing.py`](dfca/data/preprocessing.py)
-4. Combine and filter structures (see [`docs/data.md`](docs/data.md) for the 17,654-structure Merged-2D protocol)
-5. Generate train/val/test splits
+### Core Documentation
 
-## Pretrained Models
+| Document | Description |
+|----------|-------------|
+| [`docs/method.md`](docs/method.md) | Scientific method and architecture details |
+| [`docs/training.md`](docs/training.md) | Training pipeline and loss functions |
+| [`docs/generation.md`](docs/generation.md) | Generation workflow |
+| [`docs/screening.md`](docs/screening.md) | Multi-stage screening pipeline |
+| [`docs/dft_validation.md`](docs/dft_validation.md) | GPAW DFT validation protocol |
+| [`docs/representation.md`](docs/representation.md) | Crystal representation |
+| [`docs/data.md`](docs/data.md) | Dataset provenance (Merged-2D) |
+| [`docs/randomness_and_reproducibility.md`](docs/randomness_and_reproducibility.md) | Reproducibility details |
 
-Pretrained DFCA checkpoints will be released with the manuscript.
+### Supplementary Materials
 
-## Citation
+| Resource | Location |
+|----------|----------|
+| Material results | [`docs/supplementary/materials_index.md`](docs/supplementary/materials_index.md) |
+| Representative structures | [`result/representative_structures/`](result/representative_structures/) |
+| Screening results | [`result/passed_screen.csv`](result/passed_screen.csv) |
 
-Citation information will be updated upon preprint/publication.
+---
 
-## License
+## Citation and License
+
+### Citation
+
+If you use DFCA in your research, please cite:
+
+```
+TODO: Update upon publication
+```
+
+### Third-Party Code
+
+DFCA builds upon several open-source projects:
+
+- **GaussianDiffusion**: Modified from OpenAI's ADM/IDDPM/GLIDE ([GitHub](https://github.com/openai/guided-diffusion))
+- **DiT Architecture**: Based on Peebles & Xie ([arXiv:2203.01917](https://arxiv.org/abs/2203.01917))
+- **MACE-MP-0**: ML interatomic potential ([mace-offential](https://github.com/ACEsuit/mace-offential))
+- **GPAW**: DFT calculations ([gpaw.github.io](https://gpaw.github.io/))
+
+See [`THIRD_PARTY.md`](THIRD_PARTY.md) for detailed acknowledgments.
+
+### License
 
 Licensing terms are being finalized prior to public release. See [`LICENSE`](LICENSE) file for current status.
 
-## Third-Party Code
-
-DFCA builds upon several third-party implementations:
-
-- **GaussianDiffusion base class:** Modified from OpenAI's ADM/IDDPM/GLIDE repositories
-  - ADM: https://github.com/openai/guided-diffusion
-  - IDDPM: https://github.com/openai/improved-diffusion
-  - GLIDE: https://github.com/openai/glide-text2im
-
-- **DiT architecture:** Based on standard transformer patterns for diffusion models
-
-See [`THIRD_PARTY.md`](THIRD_PARTY.md) for detailed acknowledgments.
+---
 
 ## Acknowledgments
 
