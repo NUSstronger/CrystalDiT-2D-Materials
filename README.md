@@ -14,7 +14,7 @@ DFCA generates stable, novel 2D crystal structures using a crystal-specific diff
 
 ## Architecture
 
-![DFCA Architecture](docs/figures/architecture_page1.png)
+![DFCA Architecture](docs/figures/architecture.png)
 
 **Core components:**
 - **CrystalEmbedder**: XY linear + Z MLP with explicit separation
@@ -28,7 +28,7 @@ Implementation: [`dfca/models/dit.py`](dfca/models/dit.py)
 
 ## Physics-Informed Training
 
-![Physics Constraints](docs/figures/loss_page1.png)
+![Physics Constraints](docs/figures/constraints.png)
 
 11 physics constraints (c₁–c₁₁) as training loss terms:
 - **Auxiliary**: invalid slots (c₁), atom count (c₂)
@@ -42,7 +42,7 @@ Implementation: [`dfca/training/constraints.py`](dfca/training/constraints.py)
 
 ## Generation Pipeline
 
-![Generation Pipeline](docs/figures/generation_page1.png)
+![Generation Pipeline](docs/figures/generation.png)
 
 Four-stage generation: Noise Seed → Guided Denoising → Atom Decode → Crystal Reconstruction
 
@@ -68,6 +68,8 @@ DFCA achieves highest Compositional Validity, Novelty, 2D-UN, and 2D DistScore.
 ---
 
 ## Engineering Screening
+
+![Cascading Filter Pipeline](docs/figures/filter_pipeline.png)
 
 5,000 generated structures → 49 candidates → **19 dynamically stable** via hierarchical screening.
 
